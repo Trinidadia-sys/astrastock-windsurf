@@ -6,28 +6,40 @@ import StockSearch from '@/components/StockSearch';
 import StockChart from '@/components/StockChart';
 import AuthGuard from '@/components/AuthGuard';
 import { TrendingUp, TrendingDown, Activity, DollarSign, BarChart3, AlertTriangle, LogOut } from 'lucide-react';
-import { supabaseClient } from '@/lib/supabase';
 import { authWrapper } from '@/lib/auth-wrapper';
+import { supabaseClient } from '@/lib/supabase';
 import { getWatchlistClient, addToWatchlistClient, removeFromWatchlistClient } from '@/lib/watchlist';
 
-// Suppress Supabase lock errors globally
+// Suppress Supabase lock errors
 const originalConsoleError = console.error;
 console.error = (...args: any[]) => {
   const message = args[0];
-  if (typeof message === 'string' && 
-      (message.includes('lock') || 
-       message.includes('stole') || 
-       message.includes('sb-lssvwyogssqgbvaceumu-auth-token'))) {
-    // Suppress these specific Supabase lock errors
+  if (typeof message === 'string' &&
+    (message.includes('lock') || message.includes('stole') || message.includes('auth-token'))) {
     return;
   }
   originalConsoleError.apply(console, args);
 };
 
-// Safe number formatter — never crashes on null/undefined
 const fmt = (val: number | null | undefined, decimals = 2): string => {
   if (val == null || isNaN(val)) return 'N/A';
   return val.toFixed(decimals);
+};
+
+const getMarketStatus = () => {
+  const now = new Date();
+  const estTime = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const day = estTime.getDay();
+  const currentTime = estTime.getHours() * 60 + estTime.getMinutes();
+  const marketOpen = 9 * 60 + 30;
+  const marketClose = 16 * 60;
+  const isWeekday = day >= 1 && day <= 5;
+  const isOpen = isWeekday && currentTime >= marketOpen && currentTime < marketClose;
+  let nextEvent = isOpen ? 'Close: 4:00 PM EST' : 'Open: 9:30 AM EST';
+  if (!isOpen && (day === 0 || day === 6 || (day === 5 && currentTime >= marketClose))) {
+    nextEvent = 'Open: 9:30 AM EST (Mon)';
+  }
+  return { isOpen, status: isOpen ? 'Markets Open' : 'Markets Closed', nextEvent };
 };
 
 const AstraStockPage = () => {
@@ -66,395 +78,182 @@ const AstraStockPage = () => {
   const [user, setUser] = useState<any>(null);
   const [authLoading, setAuthLoading] = useState(false);
 
-  // Check if market is open (9:30 AM - 4:00 PM EST on weekdays)
-  const getMarketStatus = () => {
-    const now = new Date();
-    const estTime = new Date(now.toLocaleString("en-US", {timeZone: "America/New_York"}));
-    const day = estTime.getDay(); // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
-    const hours = estTime.getHours();
-    const minutes = estTime.getMinutes();
-    const currentTime = hours * 60 + minutes;
-    
-    // Market hours: 9:30 AM (570 minutes) to 4:00 PM (960 minutes) EST
-    const marketOpen = 9 * 60 + 30; // 9:30 AM
-    const marketClose = 16 * 60; // 4:00 PM
-    
-    // Check if it's a weekday (Monday-Friday)
-    const isWeekday = day >= 1 && day <= 5;
-    const isOpen = isWeekday && currentTime >= marketOpen && currentTime < marketClose;
-    
-    let nextEvent;
-    if (isOpen) {
-      nextEvent = `Close: 4:00 PM EST`;
-    } else {
-      // Determine next trading day
-      if (isWeekday && currentTime < marketOpen) {
-        // Same day before market opens
-        nextEvent = `Open: 9:30 AM EST`;
-      } else if (day === 5 && currentTime >= marketClose) {
-        // Friday after market close - next is Monday
-        nextEvent = `Open: 9:30 AM EST (Mon)`;
-      } else if (day === 6) {
-        // Saturday - next is Monday
-        nextEvent = `Open: 9:30 AM EST (Mon)`;
-      } else if (day === 0) {
-        // Sunday - next is Monday
-        nextEvent = `Open: 9:30 AM EST (Mon)`;
-      } else {
-        // Weekday after market close - next is tomorrow
-        nextEvent = `Open: 9:30 AM EST`;
-      }
-    }
-    
-    return {
-      isOpen,
-      status: isOpen ? "Markets Open" : "Markets Closed",
-      nextEvent
-    };
-  };
-
   const marketStatus = getMarketStatus();
 
+  const saveWatchlistToLocalStorage = (stocks: any[]) => {
+    try { localStorage.setItem('astra_watchlist', JSON.stringify(stocks)); } catch {}
+  };
+
+  const loadWatchlistFromLocalStorage = () => {
+    try {
+      const saved = localStorage.getItem('astra_watchlist');
+      return saved ? JSON.parse(saved) : [];
+    } catch { return []; }
+  };
+
+  const deduplicateWatchlist = (stocks: any[]) => {
+    const seen = new Set();
+    return stocks.filter(s => {
+      const sym = s.symbol.toUpperCase();
+      if (seen.has(sym)) return false;
+      seen.add(sym);
+      return true;
+    });
+  };
+
   const handleSignOut = async () => {
-    await authWrapper.signOut();
-    setUser(null);
+    try {
+      await supabaseClient.auth.signOut();
+      setUser(null);
+      setWatchlist([]);
+      setSelectedTicker(null);
+    } catch (error: any) {
+      console.error('Sign out error:', error);
+      setUser(null);
+      setWatchlist([]);
+      setSelectedTicker(null);
+    }
   };
 
   useEffect(() => {
     const getUser = async () => {
-      // Prevent multiple simultaneous auth calls
       if (authLoading) return;
-      
       setAuthLoading(true);
-      
       try {
         const { data: { user }, error } = await authWrapper.getUser();
-        
-        if (error) {
-          console.error('Error getting user:', error);
-          setUser(null);
-          return;
-        }
-        
+        if (error) { setUser(null); return; }
         setUser(user);
-        
-        // Load watchlist when user is authenticated
         if (user && !isDeleting) {
           try {
-            // Try to load from database first
             const watchlistData = await getWatchlistClient(user.id);
-            const formattedWatchlist = watchlistData.map(item => ({
-              symbol: item.symbol,
-              name: item.name,
-              price: 0,
-              change: 0,
-              changePercent: 0
+            const formatted = watchlistData.map(item => ({
+              symbol: item.symbol, name: item.name, price: 0, change: 0, changePercent: 0,
             }));
-            
-            if (formattedWatchlist.length > 0) {
-              console.log('Loaded watchlist from database:', formattedWatchlist);
-              setWatchlist(formattedWatchlist);
-              saveWatchlistToLocalStorage(formattedWatchlist);
-            } else {
-              // Fallback to local storage if database is empty
-              const localWatchlist = loadWatchlistFromLocalStorage();
-              console.log('Database empty, using local storage:', localWatchlist);
-              setWatchlist(localWatchlist);
-            }
-            
-            // Set selected ticker to first watchlist item if available
-            const currentWatchlist = formattedWatchlist.length > 0 ? formattedWatchlist : loadWatchlistFromLocalStorage();
-            if (currentWatchlist.length > 0) {
-              setSelectedTicker(currentWatchlist[0].symbol);
-            } else {
-              setSelectedTicker(null); // Keep null if no watchlist items
-            }
-          } catch (error) {
-            console.error('Failed to load watchlist from database, using local storage:', error);
-            // Fallback to local storage
-            const localWatchlist = loadWatchlistFromLocalStorage();
-            console.log('Using local storage fallback:', localWatchlist);
-            setWatchlist(localWatchlist);
-            
-            if (localWatchlist.length > 0) {
-              setSelectedTicker(localWatchlist[0].symbol);
-            } else {
-              setSelectedTicker(null); // Keep null if no watchlist items
-            }
+            const list = formatted.length > 0 ? formatted : loadWatchlistFromLocalStorage();
+            setWatchlist(list);
+            saveWatchlistToLocalStorage(list);
+            if (list.length > 0) setSelectedTicker(list[0].symbol);
+          } catch {
+            const local = loadWatchlistFromLocalStorage();
+            setWatchlist(local);
+            if (local.length > 0) setSelectedTicker(local[0].symbol);
           }
         } else if (!user) {
-          // Clear watchlist when user signs out, but save to local storage first
-          if (watchlist.length > 0) {
-            saveWatchlistToLocalStorage(watchlist);
-          }
+          saveWatchlistToLocalStorage(watchlist);
           setWatchlist([]);
         }
-      } catch (error) {
-        console.error('Authentication error:', error);
+      } catch {
         setUser(null);
         setWatchlist([]);
       } finally {
         setAuthLoading(false);
       }
     };
-    
     getUser();
-    
     const { data: { subscription } } = authWrapper.onAuthStateChange(async (_event: any, session: any) => {
-      // Prevent multiple simultaneous auth calls
       if (authLoading) return;
-      
       setAuthLoading(true);
-      
       try {
         setUser(session?.user ?? null);
-        
-        // Load watchlist when user signs in
         if (session?.user) {
           const watchlistData = await getWatchlistClient(session.user.id);
-          const updated = await Promise.all(
-            watchlistData.map(async (stock) => {
-              const handleAddStock = async (stock: any) => {
-                if (!stock || !stock.symbol) {
-                  console.error('Invalid stock data:', stock);
-                  alert('Please select a valid stock from search results');
-                  return;
-                }
-                
-                const upperSymbol = stock.symbol.toUpperCase();
-                
-                // Check if stock already exists in watchlist (case-insensitive)
-                if (watchlist.some(watchStock => watchStock.symbol.toUpperCase() === upperSymbol)) {
-                  alert(`${upperSymbol} is already in your watchlist`);
-                  return;
-                }
-                
-                // Save to database (with fallback to local storage)
-                console.log('Adding stock to watchlist:', { upperSymbol, name: stock.name, userId: session?.user?.id });
-                
-                let success = false;
-                if (session?.user?.id) {
-                  success = await addToWatchlistClient(session.user.id, upperSymbol, stock.name);
-                  console.log('Database save result:', success);
-                } else {
-                  console.log('No user found, cannot save to database');
-                  return;
-                }
-                
-                // Update local state
-                if (success) {
-                  setWatchlist(prev => [...prev, stock]);
-                }
-                
-                // Fetch stock data when selected from watchlist
-                if (session?.user && success) {
-                  fetchStockData(upperSymbol);
-                }
-                return stock;
-              };
-              return handleAddStock(stock);
-            })
-          );
-          setWatchlist(updated);
-        };
-      } catch (error) {
-        console.error('Auth state change error:', error);
-        // Fallback to local storage
-        const localWatchlist = loadWatchlistFromLocalStorage();
-        setWatchlist(localWatchlist);
+          const formatted = watchlistData.map(item => ({
+            symbol: item.symbol, name: item.name, price: 0, change: 0, changePercent: 0,
+          }));
+          setWatchlist(formatted);
+          saveWatchlistToLocalStorage(formatted);
+          if (formatted.length > 0) setSelectedTicker(formatted[0].symbol);
+        } else {
+          saveWatchlistToLocalStorage(watchlist);
+          setWatchlist([]);
+        }
+      } catch {
+        setWatchlist(loadWatchlistFromLocalStorage());
       } finally {
         setAuthLoading(false);
       }
     });
-    
     return () => subscription.unsubscribe();
   }, []);
 
-  // Standalone fetchStockData function that can be called with a symbol
   const fetchStockData = async (symbol?: string) => {
     const ticker = symbol || selectedTicker;
     if (!ticker) return;
-    
     try {
-      const response = await fetch(`/api/stock?symbol=${ticker}&timeRange=${timeRange}`);
-      const data = await response.json();
-      if (data.success) {
-        console.log('Stock data fetched successfully:', data.data);
-        setStockData(data.data);
-      } else {
-        console.error('Failed to fetch stock data:', data);
-      }
-    } catch (error) {
-      console.error('Failed to fetch stock data:', error);
+      const res = await fetch(`/api/stock?symbol=${ticker}&timeRange=${timeRange}`);
+      const data = await res.json();
+      if (data.success) setStockData(data.data);
+    } catch (err) {
+      console.error('Failed to fetch stock data:', err);
     }
   };
 
-  // Fetch chart + price data whenever ticker OR timeRange changes
   useEffect(() => {
     fetchStockData();
-    const interval = setInterval(fetchStockData, 3000);
+    const interval = setInterval(fetchStockData, 30000);
     return () => clearInterval(interval);
-  }, [selectedTicker, timeRange]); // <-- timeRange included here
+  }, [selectedTicker, timeRange]);
 
-  // Helper function to save watchlist to local storage
-  const saveWatchlistToLocalStorage = (stocks: any[]) => {
-    try {
-      localStorage.setItem('astra_watchlist', JSON.stringify(stocks));
-    } catch (error) {
-      console.error('Failed to save watchlist to local storage:', error);
-    }
-  };
-
-  // Helper function to load watchlist from local storage
-  const loadWatchlistFromLocalStorage = () => {
-    try {
-      const saved = localStorage.getItem('astra_watchlist');
-      return saved ? JSON.parse(saved) : [];
-    } catch (error) {
-      console.error('Failed to load watchlist from local storage:', error);
-      return [];
-    }
-  };
-
-  // Helper function to deduplicate watchlist
-  const deduplicateWatchlist = (stocks: any[]) => {
-    const seen = new Set();
-    return stocks.filter(stock => {
-      const symbol = stock.symbol.toUpperCase();
-      if (seen.has(symbol)) {
-        return false;
-      }
-      seen.add(symbol);
-      return true;
-    });
-  };
-
-  const handleAddStock = async (stock: any) => {
-    console.log('Stock selected:', stock);
-    if (!stock || !stock.symbol) {
-      console.error('Invalid stock data:', stock);
-      alert('Please select a valid stock from search results');
-      return;
-    }
-    
-    if (!user) {
-      alert('Please sign in to add stocks to your watchlist');
-      return;
-    }
-    
-    const upperSymbol = stock.symbol.toUpperCase();
-    
-    // Check if stock already exists in watchlist (case-insensitive)
-    if (watchlist.some(watchStock => watchStock.symbol.toUpperCase() === upperSymbol)) {
-      alert(`${upperSymbol} is already in your watchlist`);
-      return;
-    }
-    
-    // Save to database (with fallback to local storage)
-    console.log('Adding stock to watchlist:', { upperSymbol, name: stock.name, userId: user.id });
-    
-    let success = false;
-    if (user) {
-      success = await addToWatchlistClient(user.id, upperSymbol, stock.name);
-      console.log('Database save result:', success);
-      
-      if (!success) {
-        console.log('Database save failed, using local storage fallback');
-        success = true; // Fallback to local state
-      }
-    } else {
-      console.log('No user found, cannot save to database');
-      return;
-    }
-    
-    console.log('Final success status:', success);
-    
-    if (!success) {
-      alert('Failed to add stock to watchlist. Please check the console for details.');
-      return;
-    }
-    
-    // Update local state
-    if (success) {
-      setWatchlist(prev => [...prev, stock]);
-    }
-    
-    // Fetch stock data when selected from watchlist
-    if (user && success) {
-      fetchStockData(upperSymbol);
-    }
-    if (!success) {
-      alert('Failed to add stock to watchlist. Please check the console for details.');
-      return;
-    }
-    
-    // Add to local state (deduplicated)
-    const newStock = {
-      symbol: upperSymbol,
-      name: stock.name,
-      price: stock.price ?? 0,
-      change: stock.change ?? 0,
-      changePercent: stock.changePercent ?? 0
-    };
-    
-    console.log('Adding to local state:', newStock);
-    
-    const updatedWatchlist = deduplicateWatchlist([...watchlist, newStock]);
-    console.log('Updated watchlist:', updatedWatchlist);
-    
-    setWatchlist(updatedWatchlist);
-    saveWatchlistToLocalStorage(updatedWatchlist); // Save to local storage
-    setSelectedTicker(upperSymbol);
-    
-    console.log('Stock successfully added to watchlist!');
-  };
-
-  // Update watchlist prices (always use 1D for current price/change)
+  // Update watchlist prices
   useEffect(() => {
     const updateWatchlist = async () => {
       const updated = await Promise.all(
         watchlist.map(async (stock) => {
           try {
-            const response = await fetch(`/api/stock?symbol=${stock.symbol}&timeRange=1D`);
-            const data = await response.json();
-            if (data.success) {
-              return {
-                ...stock,
-                price:         data.data.price         ?? 0,
-                change:        data.data.change        ?? 0,
-                changePercent: data.data.changePercent ?? 0,
-              };
-            }
-          } catch (error) {
-            console.error(`Failed to update ${stock.symbol}:`, error);
-          }
+            const res = await fetch(`/api/stock?symbol=${stock.symbol}&timeRange=1D`);
+            const data = await res.json();
+            if (data.success) return { ...stock, price: data.data.price ?? 0, change: data.data.change ?? 0, changePercent: data.data.changePercent ?? 0 };
+          } catch {}
           return stock;
         })
       );
       setWatchlist(updated);
     };
-
     updateWatchlist();
-    const interval = setInterval(updateWatchlist, 3000);
+    const interval = setInterval(updateWatchlist, 30000);
     return () => clearInterval(interval);
   }, [watchlist.map(w => w.symbol).join(',')]);
 
-  const generatePrediction = async () => {
-    console.log('Generating prediction for:', selectedTicker);
-    console.log('Stock data:', stockData);
-    console.log('Historical data length:', stockData.historicalData.length);
-    
-    if (!stockData.price || stockData.price === 0) {
-      console.error('No valid stock price available for prediction');
-      return;
+  const handleAddStock = async (stock: any) => {
+    if (!stock?.symbol) { alert('Please select a valid stock'); return; }
+    if (!user) { alert('Please sign in to add stocks'); return; }
+    const upperSymbol = stock.symbol.toUpperCase();
+    if (watchlist.some(w => w.symbol.toUpperCase() === upperSymbol)) {
+      alert(`${upperSymbol} is already in your watchlist`); return;
     }
-    
-    // Generate comprehensive prediction data based on realistic financial modeling
+    await addToWatchlistClient(user.id, upperSymbol, stock.name);
+    const newStock = { symbol: upperSymbol, name: stock.name, price: stock.price ?? 0, change: stock.change ?? 0, changePercent: stock.changePercent ?? 0 };
+    const updated = deduplicateWatchlist([...watchlist, newStock]);
+    setWatchlist(updated);
+    saveWatchlistToLocalStorage(updated);
+    setSelectedTicker(upperSymbol);
+  };
+
+  const handleDeleteStock = async (symbol: string) => {
+    if (!confirm(`Remove ${symbol} from your watchlist?`)) return;
+    setIsDeleting(symbol);
+    const updated = watchlist.filter(s => s.symbol !== symbol);
+    setWatchlist(updated);
+    saveWatchlistToLocalStorage(updated);
+    if (selectedTicker === symbol) setSelectedTicker(updated.length > 0 ? updated[0].symbol : null);
+    if (user) await removeFromWatchlistClient(user.id, symbol);
+    setTimeout(() => setIsDeleting(null), 1000);
+  };
+
+  const handleStockSelect = (stock: any) => {
+    setSelectedTicker(stock.symbol);
+    setShowPrediction(false);
+  };
+
+  const [isGeneratingPrediction, setIsGeneratingPrediction] = useState(false);
+
+  const generateFallbackPrediction = () => {
     const currentPrice = stockData.price || 0;
-    const volatility = Math.abs(stockData.changePercent || 0) / 100;
+    const changePercent = stockData.changePercent || 0;
+    const volatility = Math.abs(changePercent) / 100;
     
     // Calculate historical trend from available data
-    const historicalPrices = stockData.historicalData.map(d => d.price).filter(p => p != null);
+    const historicalPrices = stockData.historicalData.map((d: any) => d.price).filter((p: any) => p != null);
     let historicalTrend = 0;
     if (historicalPrices.length >= 2) {
       const firstPrice = historicalPrices[0];
@@ -470,70 +269,87 @@ const AstraStockPage = () => {
         const change = Math.abs(historicalPrices[i] - historicalPrices[i-1]) / historicalPrices[i-1];
         dailyChanges.push(change);
       }
-      avgVolatility = dailyChanges.reduce((sum, change) => sum + change, 0) / dailyChanges.length;
+      avgVolatility = dailyChanges.reduce((sum: number, change: number) => sum + change, 0) / dailyChanges.length;
     }
     
-    console.log('Using current price:', currentPrice, 'Volatility:', avgVolatility, 'Historical trend:', historicalTrend);
+    // Enhanced prediction formulas based on financial principles
+    // 1 Day: Mean reversion + market noise
+    const shortTermTarget = currentPrice * (1 + historicalTrend * 0.1 + (Math.random() - 0.5) * avgVolatility * 0.8);
     
-    // Realistic prediction formulas based on financial principles
-    // Calculate yearly and long-term factors
+    // 1 Week: Trend continuation
+    const midTermTarget = currentPrice * (1 + historicalTrend * 0.3 + (Math.random() - 0.4) * avgVolatility * 1.5);
+    
+    // 1 Month: Momentum + trend
+    const monthlyTarget = currentPrice * (1 + historicalTrend * 0.6 + (Math.random() - 0.3) * avgVolatility * 2.5);
+    
+    // 1 Year: Fundamental growth + market cycles
     const annualGrowthRate = historicalTrend * 2.5; // Annualize the trend
     const marketCycleEffect = Math.sin(Date.now() / (365 * 24 * 60 * 60 * 1000)) * 0.1; // Market cycles
+    const yearlyTarget = currentPrice * (1 + annualGrowthRate + marketCycleEffect + (Math.random() - 0.2) * avgVolatility * 4);
+    
+    // 5 Years: Compound growth + mean reversion
     const longTermGrowthRate = Math.max(0.05, historicalTrend * 1.5); // Minimum 5% annual growth
     const compoundingFactor = Math.pow(1 + longTermGrowthRate, 5);
     const meanReversion = 0.02 * (1 - Math.exp(-5)); // Gradual mean reversion
+    const fiveYearTarget = currentPrice * (compoundingFactor + meanReversion + (Math.random() - 0.1) * avgVolatility * 6);
     
-    const predictions = [
-      {
-        timeframe: '1 Day',
-        // Short-term: mean reversion with noise
-        predictedPrice: currentPrice * (1 + historicalTrend * 0.1 + (Math.random() - 0.5) * avgVolatility * 0.8),
-        change: 0,
-        changePercent: 0,
-        confidence: 85 + Math.random() * 10
+    return {
+      shortTermPrediction: {
+        targetPrice: shortTermTarget,
+        timeframe: "7 days",
+        confidence: 85 + Math.random() * 10,
+        reasoning: "Mean reversion with market noise and small trend influence"
       },
-      {
-        timeframe: '1 Week',
-        // Weekly: trend continuation with moderate volatility
-        predictedPrice: currentPrice * (1 + historicalTrend * 0.3 + (Math.random() - 0.4) * avgVolatility * 1.5),
-        change: 0,
-        changePercent: 0,
-        confidence: 75 + Math.random() * 15
+      midTermPrediction: {
+        targetPrice: midTermTarget,
+        timeframe: "3 months",
+        confidence: 75 + Math.random() * 15,
+        reasoning: "Trend continuation with moderate volatility impact"
       },
-      {
-        timeframe: '1 Month',
-        // Monthly: trend + momentum with realistic volatility
-        predictedPrice: currentPrice * (1 + historicalTrend * 0.6 + (Math.random() - 0.3) * avgVolatility * 2.5),
-        change: 0,
-        changePercent: 0,
-        confidence: 65 + Math.random() * 20
+      yearlyPrediction: {
+        targetPrice: yearlyTarget,
+        timeframe: "1 year",
+        confidence: 65 + Math.random() * 20,
+        reasoning: "Fundamental growth with market cycles and annualized trend"
       },
-      {
-        timeframe: '1 Year',
-        // Yearly: fundamental growth + market cycles
-        predictedPrice: currentPrice * (1 + annualGrowthRate + marketCycleEffect + (Math.random() - 0.2) * avgVolatility * 4),
-        change: 0,
-        changePercent: 0,
-        confidence: 55 + Math.random() * 25
+      fiveYearPrediction: {
+        targetPrice: fiveYearTarget,
+        timeframe: "5 years",
+        confidence: 55 + Math.random() * 25,
+        reasoning: "Compound growth with mean reversion and minimum 5% annual growth"
       },
-      {
-        timeframe: '5 Years',
-        // Long-term: compound growth with regression to mean
-        predictedPrice: currentPrice * (compoundingFactor + meanReversion + (Math.random() - 0.1) * avgVolatility * 6),
-        change: 0,
-        changePercent: 0,
-        confidence: 45 + Math.random() * 30
-      }
-    ];
-    
-    // Calculate changes and percentages
-    predictions.forEach(pred => {
-      pred.change = pred.predictedPrice - currentPrice;
-      pred.changePercent = (pred.change / currentPrice) * 100;
-    });
+      technicalAnalysis: {
+        trend: historicalTrend >= 0 ? "bullish" : "bearish",
+        momentum: avgVolatility > 0.02 ? "high" : avgVolatility > 0.01 ? "moderate" : "low",
+        rsi: "neutral",
+        supportLevel: currentPrice * 0.95,
+        resistanceLevel: currentPrice * 1.05
+      },
+      riskAssessment: {
+        level: avgVolatility > 0.03 ? "high" : avgVolatility > 0.015 ? "moderate" : "low",
+        factors: ["historical volatility", "market cycles", "trend strength"],
+        volatility: avgVolatility > 0.03 ? "high" : avgVolatility > 0.015 ? "moderate" : "low"
+      },
+      keyFactors: [
+        `historical trend: ${(historicalTrend * 100).toFixed(2)}%`,
+        `average volatility: ${(avgVolatility * 100).toFixed(2)}%`,
+        "market cycle position"
+      ]
+    };
+  };
+
+  const generatePrediction = async () => {
+    if (!selectedTicker || !stockData.price || !stockData.historicalData || stockData.historicalData.length === 0) {
+      alert('Please select a stock and wait for data to load');
+      return;
+    }
+
+    setIsGeneratingPrediction(true);
     
     try {
-      const response = await fetch('/api/predict', {
+      console.log('Generating prediction for:', selectedTicker);
+      
+      const res = await fetch('/api/predict', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -542,63 +358,35 @@ const AstraStockPage = () => {
           currentPrice: stockData.price,
         }),
       });
-      const data = await response.json();
-      console.log('API response:', data);
+
+      const data = await res.json();
+      console.log('API Response:', data);
+
       if (data.success) {
-        setPredictionData(predictions);
+        setPredictionData(data.data);
+        setPredictionSymbol(selectedTicker);
         setShowPrediction(true);
-        console.log('Predictions set successfully');
+        console.log('Prediction generated successfully');
       } else {
-        // Still show local predictions even if API returns error
-        setPredictionData(predictions);
+        console.error('API Error:', data.error);
+        // Use fallback prediction if API fails
+        const fallbackData = generateFallbackPrediction();
+        setPredictionData(fallbackData);
+        setPredictionSymbol(selectedTicker);
         setShowPrediction(true);
-        console.log('API error, showing local predictions');
+        console.log('Using fallback prediction');
       }
-    } catch (error) {
-      console.error('Failed to generate prediction:', error);
-      // Still show local predictions even if API fails
-      setPredictionData(predictions);
+    } catch (err) {
+      console.error('Failed to generate prediction:', err);
+      // Use fallback prediction if API fails
+      const fallbackData = generateFallbackPrediction();
+      setPredictionData(fallbackData);
+      setPredictionSymbol(selectedTicker);
       setShowPrediction(true);
-      console.log('API failed, showing local predictions');
+      console.log('Using fallback prediction due to error');
+    } finally {
+      setIsGeneratingPrediction(false);
     }
-    
-    // Set the prediction symbol to track which stock these predictions are for
-    setPredictionSymbol(selectedTicker);
-  };
-
-  const handleDeleteStock = async (symbol: string) => {
-    if (confirm(`Are you sure you want to remove ${symbol} from your watchlist?`)) {
-      // Set deleting flag to prevent reload interference
-      setIsDeleting(symbol);
-      
-      // Remove from local state immediately
-      const updated = watchlist.filter(s => s.symbol !== symbol);
-      setWatchlist(updated);
-      saveWatchlistToLocalStorage(updated); // Save to local storage
-      
-      // Update selected ticker if needed
-      if (selectedTicker === symbol && updated.length > 0) {
-        setSelectedTicker(updated[0].symbol);
-      } else if (selectedTicker === symbol && updated.length === 0) {
-        setSelectedTicker('AAPL'); // Fallback to default
-      }
-      
-      // Remove from database (async, doesn't block UI)
-      if (user) {
-        const success = await removeFromWatchlistClient(user.id, symbol);
-        if (!success) {
-          console.log('Database remove failed, but local state updated');
-        }
-      }
-      
-      // Clear deleting flag after a short delay
-      setTimeout(() => setIsDeleting(null), 1000);
-    }
-  };
-
-  const handleStockSelect = (stock: any) => {
-    setSelectedTicker(stock.symbol);
-    setShowPrediction(false);
   };
 
   const MiniSparkline = ({ isPositive, seed = 0 }: { isPositive: boolean; seed?: number }) => {
@@ -609,24 +397,18 @@ const AstraStockPage = () => {
     });
     return (
       <svg width="100" height="40" className="opacity-60">
-        <polyline
-          points={points.map((y, i) => `${i * 5},${y}`).join(' ')}
-          fill="none"
-          stroke={isPositive ? '#10b981' : '#ef4444'}
-          strokeWidth="2"
-        />
+        <polyline points={points.map((y, i) => `${i * 5},${y}`).join(' ')} fill="none" stroke={isPositive ? '#10b981' : '#ef4444'} strokeWidth="2" />
       </svg>
     );
   };
 
-  // Safe display values
   const displayPrice         = fmt(stockData.price);
   const displayChange        = fmt(stockData.change);
   const displayChangePercent = fmt(stockData.changePercent);
   const displayDayHigh       = typeof stockData.dayHigh === 'number' ? fmt(stockData.dayHigh) : (stockData.dayHigh ?? 'N/A');
   const displayDayLow        = typeof stockData.dayLow  === 'number' ? fmt(stockData.dayLow)  : (stockData.dayLow  ?? 'N/A');
-  const predictedPrice       = stockData.price != null ? fmt(stockData.price * 1.04) : 'N/A';
   const isPositive           = (stockData.changePercent ?? 0) >= 0;
+  const showingPrediction    = showPrediction && predictionData && predictionSymbol === selectedTicker;
 
   return (
     <AuthGuard>
@@ -635,33 +417,26 @@ const AstraStockPage = () => {
 
         <div className="relative z-10 p-4 lg:p-8">
           {/* Header */}
-          <motion.header
-            initial={{ opacity: 0, y: -20 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="mb-8"
-          >
+          <motion.header initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} className="mb-8">
             <div className="flex flex-col lg:flex-row lg:justify-between lg:items-start gap-4">
               <div>
-                <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold text-white">AstraStock</h1>
-                <p className="text-white/80 text-sm sm:text-base lg:text-lg">AI-Powered Stock Market Intelligence</p>
+                <h1 className="text-4xl lg:text-5xl font-bold text-white mb-2">
+                  Astra<span className="text-orange-400">Stock</span>
+                </h1>
+                <p className="text-white/80 text-lg">AI-Powered Stock Market Intelligence</p>
                 {user && (
-                  <p className="text-orange-400 text-xs sm:text-sm mt-2">
+                  <p className="text-orange-400 text-sm mt-2">
                     Welcome back, {user.user_metadata?.full_name || user.email}
                   </p>
                 )}
               </div>
-              <div className="flex gap-2 sm:gap-4 items-center">
-                <div className="w-full sm:w-80 lg:w-96">
+              <div className="flex gap-4 items-center">
+                <div className="lg:w-96">
                   <StockSearch onStockSelect={handleStockSelect} onAddToWatchlist={handleAddStock} selectedStock={selectedTicker || undefined} />
                 </div>
                 {user && (
-                  <motion.button
-                    whileHover={{ scale: 1.05 }}
-                    whileTap={{ scale: 0.95 }}
-                    onClick={handleSignOut}
-                    className="p-3 bg-white/10 hover:bg-white/20 border border-white/20 rounded-lg text-white transition-all"
-                    title="Sign Out"
-                  >
+                  <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }} onClick={handleSignOut}
+                    className="p-3 bg-white/10 hover:bg-white/20 border border-white/20 rounded-lg text-white transition-all" title="Sign Out">
                     <LogOut className="w-5 h-5" />
                   </motion.button>
                 )}
@@ -670,55 +445,55 @@ const AstraStockPage = () => {
           </motion.header>
 
           {/* Main Dashboard */}
-          <div className="flex flex-wrap gap-4 sm:gap-6 w-full px-4 sm:px-6 max-h-[calc(100vh-200px)] overflow-hidden">
+          <div className="flex flex-col lg:flex-row gap-6 min-h-[calc(100vh-12rem)] md:flex-row lg:h-[calc(100vh-12rem)]">
 
-            {/* Watchlist */}
-            <motion.div
-              initial={{ opacity: 0, x: -20 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ delay: 0.1 }}
-              className="w-full lg:flex-1 lg:min-w-[350px] lg:max-w-[400px]"
-            >
-              <div className="bg-white/10 backdrop-blur-md rounded-2xl p-4 sm:p-6 border border-white/20 h-full overflow-hidden flex flex-col">
-                <h2 className="text-lg sm:text-xl font-semibold text-white mb-3 sm:mb-4">Watchlist</h2>
-                <div className="space-y-3">
+            {/* Panel 1: Watchlist */}
+            <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.1 }} className="flex-0.5 min-w-0 lg:h-full">
+              <div className="bg-white/10 backdrop-blur-md rounded-2xl p-4 lg:p-6 border border-white/20 h-full lg:h-full flex flex-col min-h-[300px] lg:min-h-0">
+                <h2 className="text-xl font-semibold text-white mb-4">Watchlist</h2>
+                <div className="flex-1 overflow-y-auto space-y-3">
                   {watchlist.map((stock, index) => (
-                    <div 
-                      key={index} 
-                      className="bg-white/5 rounded-lg p-3 hover:bg-white/10 transition-colors cursor-pointer"
-                      onClick={() => setSelectedTicker(stock.symbol)}
-                    >
-                      <div className="flex justify-between items-center">
+                    <motion.div key={`${stock.symbol}-${index}`} initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }}
+                      transition={{ delay: 0.2 + index * 0.1 }}
+                      className={`p-3 rounded-lg cursor-pointer transition-all ${selectedTicker === stock.symbol ? 'bg-purple-500/20 border border-purple-400/30' : 'bg-white/5 hover:bg-white/10 border border-transparent'}`}
+                      onClick={() => handleStockSelect(stock)}>
+                      <div className="flex justify-between items-start mb-2">
                         <div>
-                          <div className="font-medium text-white">{stock.symbol}</div>
-                          <div className="text-xs text-gray-400">{stock.name}</div>
+                          <span className="font-medium text-white">{stock.symbol}</span>
+                          <div className="text-xs text-white/80 mt-1">{stock.name}</div>
                         </div>
                         <div className="text-right">
-                          <div className="text-white font-semibold">${stock.price}</div>
-                          <div className={`text-xs ${stock.change >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                            {stock.change >= 0 ? '+' : ''}{fmt(stock.change)}%
+                          <div className="font-semibold text-white">${fmt(stock.price)}</div>
+                          <div className={`text-sm flex items-center gap-1 ${stock.changePercent >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                            {stock.changePercent >= 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
+                            {stock.changePercent >= 0 ? '+' : ''}{fmt(stock.changePercent)}%
                           </div>
                         </div>
                       </div>
-                    </div>
+                      <div className="flex justify-between items-center">
+                        <MiniSparkline isPositive={stock.changePercent >= 0} seed={stock.symbol.charCodeAt(0)} />
+                        <motion.button whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }}
+                          onClick={(e) => { e.stopPropagation(); handleDeleteStock(stock.symbol); }}
+                          className="p-1 bg-red-500/20 hover:bg-red-500/30 rounded text-red-400 hover:text-red-300 transition-colors">
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                          </svg>
+                        </motion.button>
+                      </div>
+                    </motion.div>
                   ))}
                 </div>
               </div>
             </motion.div>
 
-            {/* Chart */}
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.2 }}
-              className="flex-2 min-w-[300px] lg:min-w-[500px] w-full"
-            >
-              <div className="bg-white/10 backdrop-blur-md rounded-2xl p-4 sm:p-6 border border-white/20 h-full overflow-hidden flex flex-col">
+            {/* Panel 2: Stock Chart */}
+            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }} className="flex-2 min-w-0 lg:h-full">
+              <div className="bg-white/10 backdrop-blur-md rounded-2xl p-4 lg:p-6 border border-white/20 h-full lg:h-full flex flex-col min-h-[400px] lg:min-h-0">
                 <div className="mb-6">
                   <div className="flex justify-between items-start">
                     <div>
-                      <span className="font-medium text-white">{stockData.symbol}</span>
-                      <div className="text-xs text-white/80 mt-1">{stockData.name}</div>
+                      <h2 className="text-3xl font-bold text-white">{selectedTicker ?? '—'}</h2>
+                      <p className="text-gray-400 mt-1">{stockData.name}</p>
                     </div>
                     <div className="text-right">
                       <div className="text-3xl font-bold text-white">
@@ -733,287 +508,230 @@ const AstraStockPage = () => {
                   </div>
                 </div>
 
-                {selectedTicker && (
-                <StockChart
-                  symbol={selectedTicker}
-                  timeRange={timeRange}
-                  onTimeRangeChange={setTimeRange}
-                />
-              )}
-
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-4 mt-4 sm:mt-6">
-                  <div className="bg-white/5 rounded-lg p-3">
-                    <div className="flex items-center gap-2 text-gray-400 text-sm mb-1">
-                      <Activity className="w-4 h-4" /> Volume
-                    </div>
-                    <div className="text-white font-semibold">{stockData.volume}</div>
-                  </div>
-                  <div className="bg-white/5 rounded-lg p-3">
-                    <div className="flex items-center gap-2 text-gray-400 text-sm mb-1">
-                      <DollarSign className="w-4 h-4" /> Market Cap
-                    </div>
-                    <div className="text-white font-semibold">{stockData.marketCap}</div>
-                  </div>
-                  <div className="bg-white/5 rounded-lg p-3">
-                    <div className="flex items-center gap-2 text-gray-400 text-sm mb-1">
-                      <TrendingUp className="w-4 h-4" /> Day High
-                    </div>
-                    <div className="text-white font-semibold">
-                      {displayDayHigh !== 'N/A' ? `$${displayDayHigh}` : 'N/A'}
-                    </div>
-                  </div>
-                  <div className="bg-white/5 rounded-lg p-3">
-                    <div className="flex items-center gap-2 text-gray-400 text-sm mb-1">
-                      <TrendingDown className="w-4 h-4" /> Day Low
-                    </div>
-                    <div className="text-white font-semibold">
-                      {displayDayLow !== 'N/A' ? `$${displayDayLow}` : 'N/A'}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </motion.div>
-
-            {/* Market Overview */}
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.25 }}
-              className="flex-1 min-w-[140px] max-w-[160px] w-full sm:w-auto"
-            >
-              <div className="bg-white/10 backdrop-blur-md rounded-2xl p-3 sm:p-4 border border-white/20 h-full overflow-hidden flex flex-col">
-                <h2 className="text-lg font-semibold text-white mb-3">Market Overview</h2>
-                <div className="space-y-3">
-                  <div className={`bg-gradient-to-r ${marketStatus.isOpen ? 'from-green-500/10 to-transparent border-l-green-400' : 'from-red-500/10 to-transparent border-l-red-400'} rounded-lg p-2 border-l-4`}>
-                    <div className={`text-xs font-medium mb-1 ${marketStatus.isOpen ? 'text-green-300' : 'text-red-300'}`}>Market Status</div>
-                    <div className="text-white font-semibold text-sm">{marketStatus.status}</div>
-                    <div className="text-gray-400 text-xs">{marketStatus.nextEvent}</div>
-                  </div>
-                  
-                  <div className="bg-white/5 rounded-lg p-2">
-                    <div className="flex items-center gap-1 text-gray-400 text-xs mb-1">
-                      <Activity className="w-3 h-3" /> S&P 500
-                    </div>
-                    <div className="text-white font-semibold text-sm">4,783.45</div>
-                    <div className="text-green-400 text-xs">+0.82%</div>
-                  </div>
-                  
-                  <div className="bg-white/5 rounded-lg p-2">
-                    <div className="flex items-center gap-1 text-gray-400 text-xs mb-1">
-                      <TrendingUp className="w-3 h-3" /> NASDAQ
-                    </div>
-                    <div className="text-white font-semibold text-sm">14,972.76</div>
-                    <div className="text-green-400 text-xs">+1.24%</div>
-                  </div>
-                  
-                  <div className="bg-white/5 rounded-lg p-2">
-                    <div className="flex items-center gap-1 text-gray-400 text-xs mb-1">
-                      <DollarSign className="w-3 h-3" /> DOW
-                    </div>
-                    <div className="text-white font-semibold text-sm">37,545.33</div>
-                    <div className="text-red-400 text-xs">-0.15%</div>
-                  </div>
-                </div>
-              </div>
-            </motion.div>
-
-            {/* AI Insights */}
-            <motion.div
-              initial={{ opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ delay: 0.3 }}
-              className="flex-1 min-w-[300px] lg:min-w-[500px] lg:max-w-[600px] w-full sm:w-auto"
-            >
-              <div className="bg-white/10 backdrop-blur-md rounded-2xl p-3 sm:p-4 border border-white/20 h-full overflow-hidden flex flex-col">
-                <h2 className="text-lg font-semibold text-white mb-3 flex items-center justify-between">
-                  <div className="flex items-center">
-                    <span className={`w-2 h-2 rounded-full mr-2 ${showPrediction && predictionSymbol === selectedTicker ? 'bg-green-400 animate-pulse' : 'bg-gray-400'}`} />
-                    AI Insights
-                  </div>
-                  {showPrediction && predictionSymbol && (
-                    <span className="text-xs text-gray-400">
-                      {predictionSymbol === selectedTicker ? `Current: ${predictionSymbol}` : `Last: ${predictionSymbol}`}
-                    </span>
+                <div className="flex-1 min-h-[250px] md:min-h-[300px] lg:min-h-[400px]">
+                  {selectedTicker && (
+                    <StockChart symbol={selectedTicker} timeRange={timeRange} onTimeRangeChange={setTimeRange} />
                   )}
+                </div>
+
+                {/* Visual Separator */}
+                <div className="h-2 border-t border-white/10 my-4"></div>
+
+                {/* Additional Stock Details */}
+                <div className="mt-4 grid grid-cols-2 gap-2 text-xs">
+                  <div className="bg-white/5 rounded p-1.5">
+                    <div className="text-gray-400 text-xs mb-0.5">Volume</div>
+                    <div className="text-white font-semibold text-xs">{stockData.volume}</div>
+                  </div>
+                  <div className="bg-white/5 rounded p-1.5">
+                    <div className="text-gray-400 text-xs mb-0.5">Market Cap</div>
+                    <div className="text-white font-semibold text-xs">{stockData.marketCap}</div>
+                  </div>
+                  <div className="bg-white/5 rounded p-1.5">
+                    <div className="text-gray-400 text-xs mb-0.5">Day High</div>
+                    <div className="text-white font-semibold text-xs">{displayDayHigh !== 'N/A' ? `$${displayDayHigh}` : 'N/A'}</div>
+                  </div>
+                  <div className="bg-white/5 rounded p-1.5">
+                    <div className="text-gray-400 text-xs mb-0.5">Day Low</div>
+                    <div className="text-white font-semibold text-xs">{displayDayLow !== 'N/A' ? `$${displayDayLow}` : 'N/A'}</div>
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+
+            {/* Panel 3: Market Overview */}
+            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.25 }} className="flex-0.5 min-w-0 lg:h-full">
+              <div className="bg-white/10 backdrop-blur-md rounded-2xl p-4 lg:p-6 border border-white/20 h-full lg:h-full flex flex-col min-h-[300px] lg:min-h-0">
+                <h2 className="text-xl font-semibold text-white mb-4">Market Overview</h2>
+                <div className="flex-1 space-y-4">
+                  <div className="bg-white/5 rounded-lg p-4">
+                    <div className="flex items-center gap-2 text-gray-400 text-sm mb-2"><Activity className="w-4 h-4" /> Market Status</div>
+                    <div className={`text-lg font-semibold ${marketStatus.isOpen ? 'text-green-400' : 'text-red-400'}`}>{marketStatus.status}</div>
+                    <div className={`text-xs mt-1 ${marketStatus.isOpen ? 'text-green-400' : 'text-red-400'}`}>{marketStatus.nextEvent}</div>
+                  </div>
+                  <div className="bg-white/5 rounded-lg p-4">
+                    <div className="flex items-center gap-2 text-gray-400 text-sm mb-2"><Activity className="w-4 h-4" /> Volume</div>
+                    <div className="text-white font-semibold text-lg">{stockData.volume}</div>
+                    <div className="text-gray-400 text-xs mt-1">24h trading volume</div>
+                  </div>
+                  <div className="bg-white/5 rounded-lg p-4">
+                    <div className="flex items-center gap-2 text-gray-400 text-sm mb-2"><DollarSign className="w-4 h-4" /> Market Cap</div>
+                    <div className="text-white font-semibold text-lg">{stockData.marketCap}</div>
+                    <div className="text-gray-400 text-xs mt-1">Total market value</div>
+                  </div>
+                  <div className="bg-white/5 rounded-lg p-4">
+                    <div className="flex items-center gap-2 text-gray-400 text-sm mb-2"><TrendingUp className="w-4 h-4" /> Day Range</div>
+                    <div className="text-white font-semibold text-lg">
+                      {displayDayLow !== 'N/A' ? `$${displayDayLow}` : 'N/A'} - {displayDayHigh !== 'N/A' ? `$${displayDayHigh}` : 'N/A'}
+                    </div>
+                    <div className="text-gray-400 text-xs mt-1">24h price range</div>
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+
+            {/* Panel 4: AI Insights */}
+            <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.3 }} className="flex-0.5 min-w-0 lg:h-full">
+              <div className="bg-white/10 backdrop-blur-md rounded-2xl p-4 lg:p-6 border border-white/20 h-full lg:h-full flex flex-col min-h-[300px] lg:min-h-0">
+                <h2 className="text-xl font-semibold text-white mb-4 flex items-center">
+                  <span className={`w-2 h-2 rounded-full mr-2 ${showingPrediction ? 'bg-green-400 animate-pulse' : 'bg-gray-400'}`} />
+                  AI Insights
                 </h2>
 
-                <div className="space-y-3 overflow-y-auto flex-1">
-                  {showPrediction && predictionData && predictionSymbol === selectedTicker ? (
-                  <>
-                    {/* Future Prediction Table */}
-                    <div className="bg-gradient-to-r from-purple-500/10 to-transparent rounded-lg p-3 border-l-4 border-purple-400">
-                      <div className="text-purple-300 text-sm font-medium mb-2 flex items-center gap-2">
-                        <BarChart3 className="w-4 h-4" /> Future Prediction for {stockData.symbol}
-                      </div>
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-xs sm:text-sm">
-                          <thead>
-                            <tr className="text-gray-400 border-b border-white/10">
-                              <th className="text-left pb-1 sm:pb-2 px-1 sm:px-4">Timeframe</th>
-                              <th className="text-right pb-1 sm:pb-2 px-1 sm:px-4">Predicted</th>
-                              <th className="text-right pb-1 sm:pb-2 px-1 sm:px-4">Change</th>
-                              <th className="text-right pb-1 sm:pb-2 px-1 sm:px-4">Change %</th>
-                              <th className="text-right pb-1 sm:pb-2 px-1 sm:px-4">Confidence</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {predictionData.map((pred: any, index: number) => (
-                              <tr key={index} className="text-white border-b border-white/5">
-                                <td className="py-1 sm:py-2 px-1 sm:px-4 font-medium">{pred.timeframe}</td>
-                                <td className="text-right py-1 sm:py-2 px-1 sm:px-4">${fmt(pred.predictedPrice)}</td>
-                                <td className={`text-right py-1 sm:py-2 px-1 sm:px-4 ${pred.change >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                                  {pred.change >= 0 ? '+' : ''}{fmt(pred.change)}
-                                </td>
-                                <td className={`text-right py-1 sm:py-2 px-1 sm:px-4 ${pred.changePercent >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                                  {pred.changePercent >= 0 ? '+' : ''}{fmt(pred.changePercent)}%
-                                </td>
-                                <td className="text-right py-1 sm:py-2 px-1 sm:px-4">
-                                  <span className={`px-1 sm:px-2 py-1 rounded text-xs ${
-                                    pred.confidence >= 80 ? 'bg-green-500/20 text-green-300' :
-                                    pred.confidence >= 60 ? 'bg-yellow-500/20 text-yellow-300' :
-                                    'bg-red-500/20 text-red-300'
-                                  }`}>
-                                    {fmt(pred.confidence)}%
-                                  </span>
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                      <div className="text-xs text-gray-400 mt-3">
-                        *Predictions based on 5 years of historical data analysis
-                      </div>
-                    </div>
-
-                    {/* Enhanced AI Insights with Time-based Predictions */}
-                    <div className="space-y-4">
-                      {/* Monthly Prediction */}
-                      <div className="bg-gradient-to-r from-orange-500/10 to-transparent rounded-lg p-3 border-l-4 border-orange-400">
-                        <div className="text-orange-300 text-sm font-medium mb-2 flex items-center gap-2">
-                          <BarChart3 className="w-4 h-4" /> Monthly Prediction
-                        </div>
-                        {(() => {
-                          const monthlyPred = predictionData.find(p => p.timeframe === '1 Month');
-                          return monthlyPred ? (
-                            <div>
-                              <div className="text-white font-semibold">
-                                ${fmt(monthlyPred.predictedPrice)}
-                                <span className={`ml-2 text-sm ${monthlyPred.change >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                                  ({monthlyPred.change >= 0 ? '+' : ''}{fmt(monthlyPred.changePercent)}%)
-                                </span>
-                              </div>
-                              <div className="text-gray-400 text-sm mt-1">
-                                Based on 5-year historical analysis • {fmt(monthlyPred.confidence)}% confidence
-                              </div>
-                            </div>
-                          ) : (
-                            <div className="text-gray-400 text-sm">Analyzing monthly trends...</div>
-                          );
-                        })()}
-                      </div>
-
-                      {/* Yearly Prediction */}
-                      <div className="bg-gradient-to-r from-blue-500/10 to-transparent rounded-lg p-3 border-l-4 border-blue-400">
-                        <div className="text-blue-300 text-sm font-medium mb-2 flex items-center gap-2">
-                          <BarChart3 className="w-4 h-4" /> Yearly Prediction
-                        </div>
-                        {(() => {
-                          const yearlyPred = predictionData.find(p => p.timeframe === '1 Year');
-                          return yearlyPred ? (
-                            <div>
-                              <div className="text-white font-semibold">
-                                ${fmt(yearlyPred.predictedPrice)}
-                                <span className={`ml-2 text-sm ${yearlyPred.change >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                                  ({yearlyPred.change >= 0 ? '+' : ''}{fmt(yearlyPred.changePercent)}%)
-                                </span>
-                              </div>
-                              <div className="text-gray-400 text-sm mt-1">
-                                Annual growth forecast • {fmt(yearlyPred.confidence)}% confidence
-                              </div>
-                            </div>
-                          ) : (
-                            <div className="text-gray-400 text-sm">Calculating yearly outlook...</div>
-                          );
-                        })()}
-                      </div>
-
-                      {/* 5-Year Prediction */}
-                      <div className="bg-gradient-to-r from-purple-500/10 to-transparent rounded-lg p-3 border-l-4 border-purple-400">
+                <div className="flex-1 overflow-y-auto space-y-4">
+                  {showingPrediction ? (
+                    <>
+                      {/* Short-term */}
+                      <div className="bg-gradient-to-r from-purple-500/10 to-transparent rounded-lg p-4 border-l-4 border-purple-400">
                         <div className="text-purple-300 text-sm font-medium mb-2 flex items-center gap-2">
-                          <BarChart3 className="w-4 h-4" /> 5-Year Prediction
+                          <BarChart3 className="w-4 h-4" /> Short-term (7 days)
                         </div>
-                        {(() => {
-                          const fiveYearPred = predictionData.find(p => p.timeframe === '5 Years');
-                          return fiveYearPred ? (
-                            <div>
-                              <div className="text-white font-semibold">
-                                ${fmt(fiveYearPred.predictedPrice)}
-                                <span className={`ml-2 text-sm ${fiveYearPred.change >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                                  ({fiveYearPred.change >= 0 ? '+' : ''}{fmt(fiveYearPred.changePercent)}%)
-                                </span>
-                              </div>
-                              <div className="text-gray-400 text-sm mt-1">
-                                Long-term valuation model • {fmt(fiveYearPred.confidence)}% confidence
-                              </div>
-                            </div>
-                          ) : (
-                            <div className="text-gray-400 text-sm">Projecting long-term value...</div>
-                          );
-                        })()}
+                        <div className="text-white font-semibold text-lg">
+                          ${fmt(predictionData.shortTermPrediction?.targetPrice)}
+                        </div>
+                        <div className="text-gray-400 text-sm mt-1">
+                          {predictionData.shortTermPrediction?.confidence}% confidence
+                        </div>
+                        <div className="text-gray-400 text-xs mt-2">
+                          {predictionData.shortTermPrediction?.reasoning}
+                        </div>
                       </div>
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <div className="bg-gradient-to-r from-purple-500/10 to-transparent rounded-lg p-4 border-l-4 border-purple-400">
-                      <div className="text-purple-300 text-sm font-medium mb-2 flex items-center gap-2">
-                        <BarChart3 className="w-4 h-4" /> AI-Powered Predictions
-                      </div>
-                      <div className="text-white font-semibold">Comprehensive time-based analysis</div>
-                      <div className="text-gray-400 text-sm mt-1">
-                        Generate predictions for daily, weekly, monthly, yearly, and 5-year timeframes using 5 years of historical data
-                      </div>
-                    </div>
 
-                    <div className="bg-gradient-to-r from-green-500/10 to-transparent rounded-lg p-4 border-l-4 border-green-400">
-                      <div className="text-green-300 text-sm font-medium mb-2 flex items-center gap-2">
-                        <AlertTriangle className="w-4 h-4" /> Analysis Features
+                      {/* Mid-term */}
+                      <div className="bg-gradient-to-r from-blue-500/10 to-transparent rounded-lg p-4 border-l-4 border-blue-400">
+                        <div className="text-blue-300 text-sm font-medium mb-2 flex items-center gap-2">
+                          <Activity className="w-4 h-4" /> Mid-term (3 months)
+                        </div>
+                        <div className="text-white font-semibold text-lg">
+                          ${fmt(predictionData.midTermPrediction?.targetPrice)}
+                        </div>
+                        <div className="text-gray-400 text-sm mt-1">
+                          {predictionData.midTermPrediction?.confidence}% confidence
+                        </div>
+                        <div className="text-gray-400 text-xs mt-2">
+                          {predictionData.midTermPrediction?.reasoning}
+                        </div>
                       </div>
-                      <div className="text-white font-semibold">Multi-timeframe forecasting</div>
-                      <div className="text-gray-400 text-sm mt-1">Short-term momentum to long-term valuation models</div>
-                    </div>
-                  </>
-                )}
+
+                      {/* Yearly */}
+                      <div className="bg-gradient-to-r from-orange-500/10 to-transparent rounded-lg p-4 border-l-4 border-orange-400">
+                        <div className="text-orange-300 text-sm font-medium mb-2 flex items-center gap-2">
+                          <TrendingUp className="w-4 h-4" /> Yearly (1 year)
+                        </div>
+                        <div className="text-white font-semibold text-lg">
+                          ${fmt(predictionData.yearlyPrediction?.targetPrice)}
+                        </div>
+                        <div className="text-gray-400 text-sm mt-1">
+                          {predictionData.yearlyPrediction?.confidence}% confidence
+                        </div>
+                        <div className="text-gray-400 text-xs mt-2">
+                          {predictionData.yearlyPrediction?.reasoning}
+                        </div>
+                      </div>
+
+                      {/* 5-Year */}
+                      <div className="bg-gradient-to-r from-indigo-500/10 to-transparent rounded-lg p-4 border-l-4 border-indigo-400">
+                        <div className="text-indigo-300 text-sm font-medium mb-2 flex items-center gap-2">
+                          <BarChart3 className="w-4 h-4" /> Long-term (5 years)
+                        </div>
+                        <div className="text-white font-semibold text-lg">
+                          ${fmt(predictionData.fiveYearPrediction?.targetPrice)}
+                        </div>
+                        <div className="text-gray-400 text-sm mt-1">
+                          {predictionData.fiveYearPrediction?.confidence}% confidence
+                        </div>
+                        <div className="text-gray-400 text-xs mt-2">
+                          {predictionData.fiveYearPrediction?.reasoning}
+                        </div>
+                      </div>
+
+                      {/* Risk */}
+                      <div className="bg-gradient-to-r from-green-500/10 to-transparent rounded-lg p-4 border-l-4 border-green-400">
+                        <div className="text-green-300 text-sm font-medium mb-2 flex items-center gap-2">
+                          <AlertTriangle className="w-4 h-4" /> Risk Assessment
+                        </div>
+                        <div className="text-white font-semibold text-lg capitalize">
+                          {predictionData.riskAssessment?.level} risk
+                        </div>
+                        <div className="text-gray-400 text-sm mt-1">
+                          Volatility: {predictionData.riskAssessment?.volatility}
+                        </div>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="bg-gradient-to-r from-purple-500/10 to-transparent rounded-lg p-4 border-l-4 border-purple-400">
+                        <div className="text-purple-300 text-sm font-medium mb-2 flex items-center gap-2">
+                          <BarChart3 className="w-4 h-4" /> Short-term Prediction
+                        </div>
+                        <div className="text-white font-semibold text-lg">Generate to see AI forecast</div>
+                        <div className="text-gray-400 text-sm mt-1">Click below to run GPT-4 analysis</div>
+                      </div>
+                      <div className="bg-gradient-to-r from-blue-500/10 to-transparent rounded-lg p-4 border-l-4 border-blue-400">
+                        <div className="text-blue-300 text-sm font-medium mb-2 flex items-center gap-2">
+                          <Activity className="w-4 h-4" /> Mid-term Prediction
+                        </div>
+                        <div className="text-white font-semibold text-lg">Awaiting analysis</div>
+                        <div className="text-gray-400 text-sm mt-1">3-month forecast with confidence levels</div>
+                      </div>
+                      <div className="bg-gradient-to-r from-orange-500/10 to-transparent rounded-lg p-4 border-l-4 border-orange-400">
+                        <div className="text-orange-300 text-sm font-medium mb-2 flex items-center gap-2">
+                          <TrendingUp className="w-4 h-4" /> Yearly Prediction
+                        </div>
+                        <div className="text-white font-semibold text-lg">Awaiting analysis</div>
+                        <div className="text-gray-400 text-sm mt-1">12-month growth forecast based on fundamentals</div>
+                      </div>
+                      <div className="bg-gradient-to-r from-indigo-500/10 to-transparent rounded-lg p-4 border-l-4 border-indigo-400">
+                        <div className="text-indigo-300 text-sm font-medium mb-2 flex items-center gap-2">
+                          <BarChart3 className="w-4 h-4" /> Long-term Prediction
+                        </div>
+                        <div className="text-white font-semibold text-lg">Awaiting analysis</div>
+                        <div className="text-gray-400 text-sm mt-1">5-year valuation model and compound growth</div>
+                      </div>
+                      <div className="bg-gradient-to-r from-green-500/10 to-transparent rounded-lg p-4 border-l-4 border-green-400">
+                        <div className="text-green-300 text-sm font-medium mb-2 flex items-center gap-2">
+                          <AlertTriangle className="w-4 h-4" /> Risk Assessment
+                        </div>
+                        <div className="text-white font-semibold text-lg">Awaiting analysis</div>
+                        <div className="text-gray-400 text-sm mt-1">Volatility and risk scoring</div>
+                      </div>
+                    </>
+                  )}
                 </div>
 
-                <motion.button
-                  whileHover={{ scale: 1.02 }}
-                  whileTap={{ scale: 0.98 }}
-                  onClick={generatePrediction}
-                  className={`w-full mt-4 sm:mt-6 py-2 sm:py-3 rounded-lg font-semibold transition-all text-sm sm:text-base ${
-                    showPrediction && predictionSymbol === selectedTicker
-                      ? 'bg-gray-600 text-white hover:bg-gray-700'
-                      : 'bg-gradient-to-r from-purple-500 to-blue-500 text-white hover:from-purple-600 hover:to-blue-600'
-                  }`}
-                >
-                  {showPrediction && predictionSymbol === selectedTicker 
-                    ? 'Hide AI Prediction' 
-                    : showPrediction 
-                      ? 'Generate New Prediction' 
-                      : 'Generate AI Prediction'
-                  }
+                <motion.button 
+                  whileHover={{ scale: isGeneratingPrediction ? 1 : 1.02 }} 
+                  whileTap={{ scale: isGeneratingPrediction ? 1 : 0.98 }} 
+                  onClick={() => {
+                    if (showingPrediction) {
+                      setShowPrediction(false);
+                    } else {
+                      generatePrediction();
+                    }
+                  }}
+                  disabled={isGeneratingPrediction}
+                  className={`w-full mt-4 py-3 rounded-lg font-semibold transition-all ${
+                    isGeneratingPrediction
+                      ? 'bg-gray-500 text-white cursor-not-allowed'
+                      : showingPrediction
+                        ? 'bg-gray-600 text-white hover:bg-gray-700'
+                        : 'bg-gradient-to-r from-purple-500 to-blue-500 text-white hover:from-purple-600 hover:to-blue-600'
+                  }`}>
+                  {isGeneratingPrediction ? (
+                    <span className="flex items-center justify-center gap-2">
+                      <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                      </svg>
+                      Generating AI Prediction...
+                    </span>
+                  ) : showingPrediction ? 'Hide AI Prediction' : 'Generate AI Prediction'}
                 </motion.button>
               </div>
             </motion.div>
           </div>
 
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: 0.5 }}
-            className="text-center mt-8 sm:mt-12 px-4 text-gray-400 text-xs sm:text-sm"
-          >
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.5 }} className="text-center mt-12 text-gray-400 text-sm">
             <p>This app does not provide financial advice. All predictions are for educational purposes only.</p>
           </motion.div>
         </div>

@@ -16,22 +16,22 @@ export async function getWatchlist(userId: string): Promise<WatchlistItem[]> {
     }
 
     return data || [];
-  } catch (error) {
-    console.error('Error in getWatchlist:', error);
+  } catch (fetchError) {
+    console.error('Error in getWatchlist:', fetchError);
     return [];
   }
 }
 
 export async function addToWatchlist(userId: string, symbol: string, name: string): Promise<boolean> {
   try {
-    const { data: existing } = await supabaseClient
+    const { data: existingData, error: existingError } = await supabaseClient
       .from('watchlist')
       .select('*')
       .eq('user_id', userId)
       .eq('symbol', symbol)
       .single();
 
-    if (existing) {
+    if (existingData) {
       console.log('Stock already in watchlist:', symbol);
       return false;
     }
