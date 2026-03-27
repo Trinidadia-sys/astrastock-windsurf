@@ -42,7 +42,7 @@ export async function addToWatchlist(userId: string, symbol: string, name: strin
         user_id: userId,
         symbol: symbol.toUpperCase(),
         name,
-      });
+      } as any);
 
     if (error) {
       console.error('Error adding to watchlist:', error);
@@ -134,7 +134,7 @@ export async function addToWatchlistClient(userId: string, symbol: string, name:
         user_id: userId,
         symbol: symbol.toUpperCase(),
         name,
-      })
+      } as any)
       .select()
       .single();
 
