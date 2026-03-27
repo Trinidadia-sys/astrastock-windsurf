@@ -26,6 +26,12 @@ const Auth = () => {
     setLoading(true);
     setError('');
 
+    if (!supabaseClient) {
+      setError('Authentication service is unavailable. Please try again later.');
+      setLoading(false);
+      return;
+    }
+
     try {
       if (isSignUp) {
         // Sign up
