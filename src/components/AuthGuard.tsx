@@ -22,6 +22,11 @@ const AuthGuard: React.FC<AuthGuardProps> = ({ children }) => {
     
     // Check current auth state
     const getUser = async () => {
+      if (!supabaseClient) {
+        setUser(null);
+        setLoading(false);
+        return;
+      }
       const { data: { user } } = await supabaseClient.auth.getUser();
       setUser(user);
       setLoading(false);
@@ -30,13 +35,21 @@ const AuthGuard: React.FC<AuthGuardProps> = ({ children }) => {
     getUser();
 
     // Listen for auth changes
-    const { data: { subscription } } = supabaseClient.auth.onAuthStateChange((_event, session) => {
-      console.log('Auth state changed:', { event: _event, session });
-      setUser(session?.user ?? null);
-      setLoading(false);
-    });
+    let subscription: { unsubscribe: () => void } | null = null;
+    if (supabaseClient) {
+      const { data: { subscription: authSubscription } } = supabaseClient.auth.onAuthStateChange((_event, session) => {
+        console.log('Auth state changed:', { event: _event, session });
+        setUser(session?.user ?? null);
+        setLoading(false);
+      });
+      subscription = authSubscription;
+    }
 
-    return () => subscription.unsubscribe();
+    return () => {
+      if (subscription) {
+        subscription.unsubscribe();
+      }
+    };
   }, [mounted]);
 
   if (loading) {
