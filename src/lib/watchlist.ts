@@ -4,11 +4,12 @@ import { supabaseClient, WatchlistItem } from './supabase';
 
 export async function getWatchlist(userId: string): Promise<WatchlistItem[]> {
   try {
+    if (!supabaseClient) return [];
     const { data, error } = await supabaseClient
       .from('watchlist')
       .select('*')
       .eq('user_id', userId)
-      .order('created_at', { ascending: true });
+      .order('created_at', { ascending: false });
 
     if (error) {
       console.error('Error fetching watchlist:', error);
@@ -24,6 +25,7 @@ export async function getWatchlist(userId: string): Promise<WatchlistItem[]> {
 
 export async function addToWatchlist(userId: string, symbol: string, name: string): Promise<boolean> {
   try {
+    if (!supabaseClient) return false;
     const { data: existingData, error: existingError } = await supabaseClient
       .from('watchlist')
       .select('*')
@@ -59,6 +61,7 @@ export async function addToWatchlist(userId: string, symbol: string, name: strin
 
 export async function removeFromWatchlist(userId: string, symbol: string): Promise<boolean> {
   try {
+    if (!supabaseClient) return false;
     const { error } = await supabaseClient
       .from('watchlist')
       .delete()
@@ -81,6 +84,7 @@ export async function removeFromWatchlist(userId: string, symbol: string): Promi
 // Client-side functions for React components
 export async function getWatchlistClient(userId: string): Promise<WatchlistItem[]> {
   try {
+    if (!supabaseClient) return [];
     console.log('Fetching watchlist for user:', userId);
 
     const { data, error } = await supabaseClient
@@ -109,6 +113,7 @@ export async function getWatchlistClient(userId: string): Promise<WatchlistItem[
 
 export async function addToWatchlistClient(userId: string, symbol: string, name: string): Promise<boolean> {
   try {
+    if (!supabaseClient) return false;
     console.log('Adding to watchlist:', { userId, symbol, name });
 
     const { data: existing, error: checkError } = await supabaseClient
@@ -153,6 +158,7 @@ export async function addToWatchlistClient(userId: string, symbol: string, name:
 
 export async function removeFromWatchlistClient(userId: string, symbol: string): Promise<boolean> {
   try {
+    if (!supabaseClient) return false;
     const { error } = await supabaseClient
       .from('watchlist')
       .delete()

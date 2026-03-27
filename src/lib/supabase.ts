@@ -1,17 +1,22 @@
 import { createClient } from '@supabase/supabase-js';
 
-const supabaseUrl     = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
+// Handle build time when env vars might not be available
 if (!supabaseUrl || !supabaseAnonKey) {
-  throw new Error('Supabase environment variables are not set');
+  if (typeof window !== 'undefined') {
+    // Only throw in browser, not during build
+    throw new Error('Supabase environment variables are not set');
+  }
+  // During build, we'll handle this gracefully
 }
 
 // Singleton — one instance for the entire app, prevents lock conflicts
 let _client: ReturnType<typeof createClient> | null = null;
 
 export const supabaseClient = (() => {
-  if (!_client) {
+  if (!_client && supabaseUrl && supabaseAnonKey) {
     _client = createClient(supabaseUrl, supabaseAnonKey);
   }
   return _client;
@@ -21,7 +26,7 @@ export const supabaseClient = (() => {
 // Use process.env directly (no NEXT_PUBLIC_ prefix) so it stays server-only
 export const getServerSupabase = () => {
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!serviceKey) throw new Error('SUPABASE_SERVICE_ROLE_KEY is not set');
+  if (!serviceKey || !supabaseUrl) return null;
   return createClient(supabaseUrl, serviceKey);
 };
 
