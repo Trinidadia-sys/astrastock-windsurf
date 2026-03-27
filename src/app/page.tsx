@@ -103,7 +103,9 @@ const AstraStockPage = () => {
 
   const handleSignOut = async () => {
     try {
-      await supabaseClient.auth.signOut();
+      if (supabaseClient) {
+        await supabaseClient.auth.signOut();
+      }
       setUser(null);
       setWatchlist([]);
       setSelectedTicker(null);
