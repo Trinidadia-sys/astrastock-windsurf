@@ -200,15 +200,15 @@ const StockChart: React.FC<StockChartProps> = ({
             <AreaChart data={data} margin={{ top: 10, right: 10, left: 10, bottom: 10 }}>
               <defs>
                 <linearGradient id="colorPrice" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.3} />
-                  <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0} />
+                  <stop offset="5%" stopColor="#fb923c" stopOpacity={0.3} />
+                  <stop offset="95%" stopColor="#fb923c" stopOpacity={0} />
                 </linearGradient>
               </defs>
               <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
-              <XAxis dataKey="date" stroke="#9ca3af" fontSize={12} tick={{ fill: '#9ca3af' }} />
-              <YAxis stroke="#9ca3af" fontSize={12} tick={{ fill: '#9ca3af' }} domain={['auto', 'auto']} />
+              <XAxis dataKey="date" stroke="#ffffff" fontSize={12} tick={{ fill: '#ffffff' }} />
+              <YAxis stroke="#ffffff" fontSize={12} tick={{ fill: '#ffffff' }} domain={['auto', 'auto']} />
               <Tooltip content={<CustomTooltip />} />
-              <Area type="monotone" dataKey="price" stroke="#8b5cf6" strokeWidth={2} fill="url(#colorPrice)" dot={false} />
+              <Area type="monotone" dataKey="price" stroke="#fb923c" strokeWidth={2} fill="url(#colorPrice)" dot={false} />
             </AreaChart>
           </ResponsiveContainer>
         )}

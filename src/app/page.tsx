@@ -254,7 +254,6 @@ const AstraStockPage = () => {
     const changePercent = stockData.changePercent || 0;
     const volatility = Math.abs(changePercent) / 100;
     
-    // Calculate historical trend from available data
     const historicalPrices = stockData.historicalData.map((d: any) => d.price).filter((p: any) => p != null);
     let historicalTrend = 0;
     if (historicalPrices.length >= 2) {
@@ -263,7 +262,6 @@ const AstraStockPage = () => {
       historicalTrend = (lastPrice - firstPrice) / firstPrice;
     }
     
-    // Calculate average daily volatility from historical data
     let avgVolatility = volatility;
     if (historicalPrices.length > 1) {
       const dailyChanges = [];
@@ -274,25 +272,15 @@ const AstraStockPage = () => {
       avgVolatility = dailyChanges.reduce((sum: number, change: number) => sum + change, 0) / dailyChanges.length;
     }
     
-    // Enhanced prediction formulas based on financial principles
-    // 1 Day: Mean reversion + market noise
     const shortTermTarget = currentPrice * (1 + historicalTrend * 0.1 + (Math.random() - 0.5) * avgVolatility * 0.8);
-    
-    // 1 Week: Trend continuation
     const midTermTarget = currentPrice * (1 + historicalTrend * 0.3 + (Math.random() - 0.4) * avgVolatility * 1.5);
-    
-    // 1 Month: Momentum + trend
     const monthlyTarget = currentPrice * (1 + historicalTrend * 0.6 + (Math.random() - 0.3) * avgVolatility * 2.5);
-    
-    // 1 Year: Fundamental growth + market cycles
-    const annualGrowthRate = historicalTrend * 2.5; // Annualize the trend
-    const marketCycleEffect = Math.sin(Date.now() / (365 * 24 * 60 * 60 * 1000)) * 0.1; // Market cycles
+    const annualGrowthRate = historicalTrend * 2.5;
+    const marketCycleEffect = Math.sin(Date.now() / (365 * 24 * 60 * 60 * 1000)) * 0.1;
     const yearlyTarget = currentPrice * (1 + annualGrowthRate + marketCycleEffect + (Math.random() - 0.2) * avgVolatility * 4);
-    
-    // 5 Years: Compound growth + mean reversion
-    const longTermGrowthRate = Math.max(0.05, historicalTrend * 1.5); // Minimum 5% annual growth
+    const longTermGrowthRate = Math.max(0.05, historicalTrend * 1.5);
     const compoundingFactor = Math.pow(1 + longTermGrowthRate, 5);
-    const meanReversion = 0.02 * (1 - Math.exp(-5)); // Gradual mean reversion
+    const meanReversion = 0.02 * (1 - Math.exp(-5));
     const fiveYearTarget = currentPrice * (compoundingFactor + meanReversion + (Math.random() - 0.1) * avgVolatility * 6);
     
     return {
@@ -349,8 +337,6 @@ const AstraStockPage = () => {
     setIsGeneratingPrediction(true);
     
     try {
-      console.log('Generating prediction for:', selectedTicker);
-      
       const res = await fetch('/api/predict', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -362,30 +348,22 @@ const AstraStockPage = () => {
       });
 
       const data = await res.json();
-      console.log('API Response:', data);
 
       if (data.success) {
         setPredictionData(data.data);
         setPredictionSymbol(selectedTicker);
         setShowPrediction(true);
-        console.log('Prediction generated successfully');
       } else {
-        console.error('API Error:', data.error);
-        // Use fallback prediction if API fails
         const fallbackData = generateFallbackPrediction();
         setPredictionData(fallbackData);
         setPredictionSymbol(selectedTicker);
         setShowPrediction(true);
-        console.log('Using fallback prediction');
       }
     } catch (err) {
-      console.error('Failed to generate prediction:', err);
-      // Use fallback prediction if API fails
       const fallbackData = generateFallbackPrediction();
       setPredictionData(fallbackData);
       setPredictionSymbol(selectedTicker);
       setShowPrediction(true);
-      console.log('Using fallback prediction due to error');
     } finally {
       setIsGeneratingPrediction(false);
     }
@@ -414,7 +392,7 @@ const AstraStockPage = () => {
 
   return (
     <AuthGuard>
-      <div className="min-h-screen bg-gradient-to-br from-purple-700 via-orange-500 via-orange-400 to-slate-900">
+      <div className="min-h-screen bg-purple-800">
         <div className="absolute inset-0 bg-black/20 backdrop-blur-xl" />
 
         <div className="relative z-10 p-4 lg:p-8">
@@ -447,11 +425,11 @@ const AstraStockPage = () => {
           </motion.header>
 
           {/* Main Dashboard */}
-          <div className="flex flex-col lg:flex-row gap-6 min-h-[calc(100vh-12rem)] md:flex-row lg:h-[calc(100vh-12rem)]">
+          <div className="flex flex-col lg:flex-row gap-6 mb-6 lg:min-h-[calc(100vh-25rem)]">
 
             {/* Panel 1: Watchlist */}
-            <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.1 }} className="flex-0.5 min-w-0 lg:h-full">
-              <div className="bg-white/10 backdrop-blur-md rounded-2xl p-4 lg:p-6 border border-white/20 h-full lg:h-full flex flex-col min-h-[300px] lg:min-h-0">
+            <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.1 }} className="flex-0.5 min-w-0">
+              <div className="bg-white/10 backdrop-blur-md rounded-2xl p-4 lg:p-6 border border-white/20 flex flex-col min-h-[300px]">
                 <h2 className="text-xl font-semibold text-white mb-4">Watchlist</h2>
                 <div className="flex-1 overflow-y-auto space-y-3">
                   {watchlist.map((stock, index) => (
@@ -488,229 +466,173 @@ const AstraStockPage = () => {
               </div>
             </motion.div>
 
-            {/* Panel 2: Stock Chart */}
-            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }} className="flex-2 min-w-0 lg:h-full">
-              <div className="bg-white/10 backdrop-blur-md rounded-2xl p-4 lg:p-6 border border-white/20 h-full lg:h-full flex flex-col min-h-[400px] lg:min-h-0">
-                <div className="mb-6">
-                  <div className="flex justify-between items-start">
-                    <div>
-                      <h2 className="text-3xl font-bold text-white">{selectedTicker ?? '—'}</h2>
-                      <p className="text-gray-400 mt-1">{stockData.name}</p>
+            {/* Panel 2: Stock Chart — unified card, no separator */}
+            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }} className="flex-2 min-w-0">
+              <div className="bg-white/10 backdrop-blur-md rounded-2xl p-4 lg:p-6 border border-white/20 flex flex-col min-h-[250px] lg:min-h-[280px]">
+                {/* Ticker header */}
+                <div className="flex justify-between items-start mb-4">
+                  <div>
+                    <h2 className="text-3xl font-bold text-white">{selectedTicker ?? '—'}</h2>
+                    <p className="text-white/80 mt-1">{stockData.name}</p>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-3xl font-bold text-white">
+                      {displayPrice !== 'N/A' ? `$${displayPrice}` : '—'}
                     </div>
-                    <div className="text-right">
-                      <div className="text-3xl font-bold text-white">
-                        {displayPrice !== 'N/A' ? `$${displayPrice}` : '—'}
-                      </div>
-                      <div className={`text-sm flex items-center justify-end gap-1 ${isPositive ? 'text-green-400' : 'text-red-400'}`}>
-                        {isPositive ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
-                        {displayChange !== 'N/A' ? `${isPositive ? '+' : ''}${displayChange}` : 'N/A'}
-                        {' '}({displayChangePercent !== 'N/A' ? `${isPositive ? '+' : ''}${displayChangePercent}%` : 'N/A'})
-                      </div>
+                    <div className={`text-sm flex items-center justify-end gap-1 ${isPositive ? 'text-green-400' : 'text-red-400'}`}>
+                      {isPositive ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
+                      {displayChange !== 'N/A' ? `${isPositive ? '+' : ''}${displayChange}` : 'N/A'}
+                      {' '}({displayChangePercent !== 'N/A' ? `${isPositive ? '+' : ''}${displayChangePercent}%` : 'N/A'})
                     </div>
                   </div>
                 </div>
 
-                <div className="flex-1 min-h-[250px] md:min-h-[300px] lg:min-h-[400px]">
+                {/* Chart */}
+                <div className="flex-1 min-h-[200px] lg:min-h-[300px]">
                   {selectedTicker && (
                     <StockChart symbol={selectedTicker} timeRange={timeRange} onTimeRangeChange={setTimeRange} />
                   )}
                 </div>
 
-                {/* Visual Separator */}
-                <div className="h-2 border-t border-white/10 my-4"></div>
-
-                {/* Additional Stock Details */}
-                <div className="mt-4 grid grid-cols-2 gap-2 text-xs">
-                  <div className="bg-white/5 rounded p-1.5">
-                    <div className="text-gray-400 text-xs mb-0.5">Volume</div>
-                    <div className="text-white font-semibold text-xs">{stockData.volume}</div>
+                {/* Stats grid — flush inside same card */}
+                <div className="grid grid-cols-2 gap-2 mt-4">
+                  <div className="bg-white/5 rounded-lg p-3">
+                    <div className="text-white/60 text-xs mb-1">Volume</div>
+                    <div className="text-white font-semibold text-sm">{stockData.volume}</div>
                   </div>
-                  <div className="bg-white/5 rounded p-1.5">
-                    <div className="text-gray-400 text-xs mb-0.5">Market Cap</div>
-                    <div className="text-white font-semibold text-xs">{stockData.marketCap}</div>
+                  <div className="bg-white/5 rounded-lg p-3">
+                    <div className="text-white/60 text-xs mb-1">Market Cap</div>
+                    <div className="text-white font-semibold text-sm">{stockData.marketCap}</div>
                   </div>
-                  <div className="bg-white/5 rounded p-1.5">
-                    <div className="text-gray-400 text-xs mb-0.5">Day High</div>
-                    <div className="text-white font-semibold text-xs">{displayDayHigh !== 'N/A' ? `$${displayDayHigh}` : 'N/A'}</div>
+                  <div className="bg-white/5 rounded-lg p-3">
+                    <div className="text-white/60 text-xs mb-1">Day High</div>
+                    <div className="text-white font-semibold text-sm">{displayDayHigh !== 'N/A' ? `$${displayDayHigh}` : 'N/A'}</div>
                   </div>
-                  <div className="bg-white/5 rounded p-1.5">
-                    <div className="text-gray-400 text-xs mb-0.5">Day Low</div>
-                    <div className="text-white font-semibold text-xs">{displayDayLow !== 'N/A' ? `$${displayDayLow}` : 'N/A'}</div>
+                  <div className="bg-white/5 rounded-lg p-3">
+                    <div className="text-white/60 text-xs mb-1">Day Low</div>
+                    <div className="text-white font-semibold text-sm">{displayDayLow !== 'N/A' ? `$${displayDayLow}` : 'N/A'}</div>
                   </div>
                 </div>
               </div>
             </motion.div>
 
             {/* Panel 3: Market Overview */}
-            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.25 }} className="flex-0.5 min-w-0 lg:h-full">
-              <div className="bg-white/10 backdrop-blur-md rounded-2xl p-4 lg:p-6 border border-white/20 h-full lg:h-full flex flex-col min-h-[300px] lg:min-h-0">
+            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.25 }} className="flex-0.5 min-w-0">
+              <div className="bg-white/10 backdrop-blur-md rounded-2xl p-4 lg:p-6 border border-white/20 flex flex-col min-h-[200px] lg:min-h-[220px]">
                 <h2 className="text-xl font-semibold text-white mb-4">Market Overview</h2>
                 <div className="flex-1 space-y-4">
                   <div className="bg-white/5 rounded-lg p-4">
-                    <div className="flex items-center gap-2 text-gray-400 text-sm mb-2"><Activity className="w-4 h-4" /> Market Status</div>
+                    <div className="flex items-center gap-2 text-white/80 text-sm mb-2"><Activity className="w-4 h-4" /> Market Status</div>
                     <div className={`text-lg font-semibold ${marketStatus.isOpen ? 'text-green-400' : 'text-red-400'}`}>{marketStatus.status}</div>
                     <div className={`text-xs mt-1 ${marketStatus.isOpen ? 'text-green-400' : 'text-red-400'}`}>{marketStatus.nextEvent}</div>
                   </div>
                   <div className="bg-white/5 rounded-lg p-4">
-                    <div className="flex items-center gap-2 text-gray-400 text-sm mb-2"><Activity className="w-4 h-4" /> Volume</div>
+                    <div className="flex items-center gap-2 text-white/80 text-sm mb-2"><Activity className="w-4 h-4" /> Volume</div>
                     <div className="text-white font-semibold text-lg">{stockData.volume}</div>
-                    <div className="text-gray-400 text-xs mt-1">24h trading volume</div>
+                    <div className="text-white/80 text-xs mt-1">24h trading volume</div>
                   </div>
                   <div className="bg-white/5 rounded-lg p-4">
-                    <div className="flex items-center gap-2 text-gray-400 text-sm mb-2"><DollarSign className="w-4 h-4" /> Market Cap</div>
+                    <div className="flex items-center gap-2 text-white/80 text-sm mb-2"><DollarSign className="w-4 h-4" /> Market Cap</div>
                     <div className="text-white font-semibold text-lg">{stockData.marketCap}</div>
-                    <div className="text-gray-400 text-xs mt-1">Total market value</div>
+                    <div className="text-white/80 text-xs mt-1">Total market value</div>
                   </div>
                   <div className="bg-white/5 rounded-lg p-4">
-                    <div className="flex items-center gap-2 text-gray-400 text-sm mb-2"><TrendingUp className="w-4 h-4" /> Day Range</div>
+                    <div className="flex items-center gap-2 text-white/80 text-sm mb-2"><TrendingUp className="w-4 h-4" /> Day Range</div>
                     <div className="text-white font-semibold text-lg">
                       {displayDayLow !== 'N/A' ? `$${displayDayLow}` : 'N/A'} - {displayDayHigh !== 'N/A' ? `$${displayDayHigh}` : 'N/A'}
                     </div>
-                    <div className="text-gray-400 text-xs mt-1">24h price range</div>
+                    <div className="text-white/80 text-xs mt-1">24h price range</div>
                   </div>
                 </div>
               </div>
             </motion.div>
 
             {/* Panel 4: AI Insights */}
-            <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.3 }} className="flex-0.5 min-w-0 lg:h-full">
-              <div className="bg-white/10 backdrop-blur-md rounded-2xl p-4 lg:p-6 border border-white/20 h-full lg:h-full flex flex-col min-h-[300px] lg:min-h-0">
+            <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.3 }} className="flex-0.5 min-w-0">
+              <div className="bg-white/10 backdrop-blur-md rounded-2xl p-4 lg:p-6 border border-white/20 flex flex-col min-h-[200px] lg:min-h-[220px]">
                 <h2 className="text-xl font-semibold text-white mb-4 flex items-center">
-                  <span className={`w-2 h-2 rounded-full mr-2 ${showingPrediction ? 'bg-green-400 animate-pulse' : 'bg-gray-400'}`} />
+                  <span className={`w-2 h-2 rounded-full mr-2 ${showingPrediction ? 'bg-green-400 animate-pulse' : 'bg-white/60'}`} />
                   AI Insights
                 </h2>
 
                 <div className="flex-1 overflow-y-auto space-y-4">
                   {showingPrediction ? (
                     <>
-                      {/* Short-term */}
                       <div className="bg-gradient-to-r from-purple-500/10 to-transparent rounded-lg p-4 border-l-4 border-purple-400">
                         <div className="text-purple-300 text-sm font-medium mb-2 flex items-center gap-2">
                           <BarChart3 className="w-4 h-4" /> Short-term (7 days)
                         </div>
-                        <div className="text-white font-semibold text-lg">
-                          ${fmt(predictionData.shortTermPrediction?.targetPrice)}
-                        </div>
-                        <div className="text-gray-400 text-sm mt-1">
-                          {predictionData.shortTermPrediction?.confidence}% confidence
-                        </div>
-                        <div className="text-gray-400 text-xs mt-2">
-                          {predictionData.shortTermPrediction?.reasoning}
-                        </div>
+                        <div className="text-white font-semibold text-lg">${fmt(predictionData.shortTermPrediction?.targetPrice)}</div>
+                        <div className="text-white/80 text-sm mt-1">{predictionData.shortTermPrediction?.confidence}% confidence</div>
+                        <div className="text-white/80 text-xs mt-2">{predictionData.shortTermPrediction?.reasoning}</div>
                       </div>
-
-                      {/* Mid-term */}
                       <div className="bg-gradient-to-r from-blue-500/10 to-transparent rounded-lg p-4 border-l-4 border-blue-400">
                         <div className="text-blue-300 text-sm font-medium mb-2 flex items-center gap-2">
                           <Activity className="w-4 h-4" /> Mid-term (3 months)
                         </div>
-                        <div className="text-white font-semibold text-lg">
-                          ${fmt(predictionData.midTermPrediction?.targetPrice)}
-                        </div>
-                        <div className="text-gray-400 text-sm mt-1">
-                          {predictionData.midTermPrediction?.confidence}% confidence
-                        </div>
-                        <div className="text-gray-400 text-xs mt-2">
-                          {predictionData.midTermPrediction?.reasoning}
-                        </div>
+                        <div className="text-white font-semibold text-lg">${fmt(predictionData.midTermPrediction?.targetPrice)}</div>
+                        <div className="text-white/80 text-sm mt-1">{predictionData.midTermPrediction?.confidence}% confidence</div>
+                        <div className="text-white/80 text-xs mt-2">{predictionData.midTermPrediction?.reasoning}</div>
                       </div>
-
-                      {/* Yearly */}
                       <div className="bg-gradient-to-r from-orange-500/10 to-transparent rounded-lg p-4 border-l-4 border-orange-400">
                         <div className="text-orange-300 text-sm font-medium mb-2 flex items-center gap-2">
                           <TrendingUp className="w-4 h-4" /> Yearly (1 year)
                         </div>
-                        <div className="text-white font-semibold text-lg">
-                          ${fmt(predictionData.yearlyPrediction?.targetPrice)}
-                        </div>
-                        <div className="text-gray-400 text-sm mt-1">
-                          {predictionData.yearlyPrediction?.confidence}% confidence
-                        </div>
-                        <div className="text-gray-400 text-xs mt-2">
-                          {predictionData.yearlyPrediction?.reasoning}
-                        </div>
+                        <div className="text-white font-semibold text-lg">${fmt(predictionData.yearlyPrediction?.targetPrice)}</div>
+                        <div className="text-white/80 text-sm mt-1">{predictionData.yearlyPrediction?.confidence}% confidence</div>
+                        <div className="text-white/80 text-xs mt-2">{predictionData.yearlyPrediction?.reasoning}</div>
                       </div>
-
-                      {/* 5-Year */}
                       <div className="bg-gradient-to-r from-indigo-500/10 to-transparent rounded-lg p-4 border-l-4 border-indigo-400">
                         <div className="text-indigo-300 text-sm font-medium mb-2 flex items-center gap-2">
                           <BarChart3 className="w-4 h-4" /> Long-term (5 years)
                         </div>
-                        <div className="text-white font-semibold text-lg">
-                          ${fmt(predictionData.fiveYearPrediction?.targetPrice)}
-                        </div>
-                        <div className="text-gray-400 text-sm mt-1">
-                          {predictionData.fiveYearPrediction?.confidence}% confidence
-                        </div>
-                        <div className="text-gray-400 text-xs mt-2">
-                          {predictionData.fiveYearPrediction?.reasoning}
-                        </div>
+                        <div className="text-white font-semibold text-lg">${fmt(predictionData.fiveYearPrediction?.targetPrice)}</div>
+                        <div className="text-white/80 text-sm mt-1">{predictionData.fiveYearPrediction?.confidence}% confidence</div>
+                        <div className="text-white/80 text-xs mt-2">{predictionData.fiveYearPrediction?.reasoning}</div>
                       </div>
-
-                      {/* Risk */}
                       <div className="bg-gradient-to-r from-green-500/10 to-transparent rounded-lg p-4 border-l-4 border-green-400">
                         <div className="text-green-300 text-sm font-medium mb-2 flex items-center gap-2">
                           <AlertTriangle className="w-4 h-4" /> Risk Assessment
                         </div>
-                        <div className="text-white font-semibold text-lg capitalize">
-                          {predictionData.riskAssessment?.level} risk
-                        </div>
-                        <div className="text-gray-400 text-sm mt-1">
-                          Volatility: {predictionData.riskAssessment?.volatility}
-                        </div>
+                        <div className="text-white font-semibold text-lg capitalize">{predictionData.riskAssessment?.level} risk</div>
+                        <div className="text-white/80 text-sm mt-1">Volatility: {predictionData.riskAssessment?.volatility}</div>
                       </div>
                     </>
                   ) : (
                     <>
                       <div className="bg-gradient-to-r from-purple-500/10 to-transparent rounded-lg p-4 border-l-4 border-purple-400">
-                        <div className="text-purple-300 text-sm font-medium mb-2 flex items-center gap-2">
-                          <BarChart3 className="w-4 h-4" /> Short-term Prediction
-                        </div>
+                        <div className="text-purple-300 text-sm font-medium mb-2 flex items-center gap-2"><BarChart3 className="w-4 h-4" /> Short-term Prediction</div>
                         <div className="text-white font-semibold text-lg">Generate to see AI forecast</div>
-                        <div className="text-gray-400 text-sm mt-1">Click below to run GPT-4 analysis</div>
+                        <div className="text-white/80 text-sm mt-1">Click below to run GPT-4 analysis</div>
                       </div>
                       <div className="bg-gradient-to-r from-blue-500/10 to-transparent rounded-lg p-4 border-l-4 border-blue-400">
-                        <div className="text-blue-300 text-sm font-medium mb-2 flex items-center gap-2">
-                          <Activity className="w-4 h-4" /> Mid-term Prediction
-                        </div>
+                        <div className="text-blue-300 text-sm font-medium mb-2 flex items-center gap-2"><Activity className="w-4 h-4" /> Mid-term Prediction</div>
                         <div className="text-white font-semibold text-lg">Awaiting analysis</div>
-                        <div className="text-gray-400 text-sm mt-1">3-month forecast with confidence levels</div>
+                        <div className="text-white/80 text-sm mt-1">3-month forecast with confidence levels</div>
                       </div>
                       <div className="bg-gradient-to-r from-orange-500/10 to-transparent rounded-lg p-4 border-l-4 border-orange-400">
-                        <div className="text-orange-300 text-sm font-medium mb-2 flex items-center gap-2">
-                          <TrendingUp className="w-4 h-4" /> Yearly Prediction
-                        </div>
+                        <div className="text-orange-300 text-sm font-medium mb-2 flex items-center gap-2"><TrendingUp className="w-4 h-4" /> Yearly Prediction</div>
                         <div className="text-white font-semibold text-lg">Awaiting analysis</div>
-                        <div className="text-gray-400 text-sm mt-1">12-month growth forecast based on fundamentals</div>
+                        <div className="text-white/80 text-sm mt-1">12-month growth forecast based on fundamentals</div>
                       </div>
                       <div className="bg-gradient-to-r from-indigo-500/10 to-transparent rounded-lg p-4 border-l-4 border-indigo-400">
-                        <div className="text-indigo-300 text-sm font-medium mb-2 flex items-center gap-2">
-                          <BarChart3 className="w-4 h-4" /> Long-term Prediction
-                        </div>
+                        <div className="text-indigo-300 text-sm font-medium mb-2 flex items-center gap-2"><BarChart3 className="w-4 h-4" /> Long-term Prediction</div>
                         <div className="text-white font-semibold text-lg">Awaiting analysis</div>
-                        <div className="text-gray-400 text-sm mt-1">5-year valuation model and compound growth</div>
+                        <div className="text-white/80 text-sm mt-1">5-year valuation model and compound growth</div>
                       </div>
                       <div className="bg-gradient-to-r from-green-500/10 to-transparent rounded-lg p-4 border-l-4 border-green-400">
-                        <div className="text-green-300 text-sm font-medium mb-2 flex items-center gap-2">
-                          <AlertTriangle className="w-4 h-4" /> Risk Assessment
-                        </div>
+                        <div className="text-green-300 text-sm font-medium mb-2 flex items-center gap-2"><AlertTriangle className="w-4 h-4" /> Risk Assessment</div>
                         <div className="text-white font-semibold text-lg">Awaiting analysis</div>
-                        <div className="text-gray-400 text-sm mt-1">Volatility and risk scoring</div>
+                        <div className="text-white/80 text-sm mt-1">Volatility and risk scoring</div>
                       </div>
                     </>
                   )}
                 </div>
 
-                <motion.button 
-                  whileHover={{ scale: isGeneratingPrediction ? 1 : 1.02 }} 
-                  whileTap={{ scale: isGeneratingPrediction ? 1 : 0.98 }} 
-                  onClick={() => {
-                    if (showingPrediction) {
-                      setShowPrediction(false);
-                    } else {
-                      generatePrediction();
-                    }
-                  }}
+                <motion.button
+                  whileHover={{ scale: isGeneratingPrediction ? 1 : 1.02 }}
+                  whileTap={{ scale: isGeneratingPrediction ? 1 : 0.98 }}
+                  onClick={() => { if (showingPrediction) { setShowPrediction(false); } else { generatePrediction(); } }}
                   disabled={isGeneratingPrediction}
                   className={`w-full mt-4 py-3 rounded-lg font-semibold transition-all ${
                     isGeneratingPrediction
@@ -733,9 +655,7 @@ const AstraStockPage = () => {
             </motion.div>
           </div>
 
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.5 }} className="text-center mt-12 text-gray-400 text-sm">
-            <p>This app does not provide financial advice. All predictions are for educational purposes only.</p>
-          </motion.div>
+          <p className="text-center mt-12 text-purple-200 text-sm">This app does not provide financial advice. All predictions are for educational purposes only.</p>
         </div>
       </div>
     </AuthGuard>
